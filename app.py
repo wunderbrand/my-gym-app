@@ -2,12 +2,11 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import os
-import time
 
 # --- APP CONFIG ---
 st.set_page_config(page_title="GymFlow", layout="wide")
 
-# Program Library with Target Sets explicitly defined
+# Program Library - Targets derived from your program notes
 PROGRAM = {
     "Monday": {
         "Deadlift": {"w": 80.0, "r": 10, "s": 4, "note": "Superset: Shoulder Press"},
@@ -45,16 +44,18 @@ PROGRAM = {
 
 DB_FILE = "workout_logs.csv"
 if not os.path.exists(DB_FILE):
-    df = pd.DataFrame(columns=["Date", "Day", "Exercise", "Weight", "Reps", "Set_Number", "1RM"])
+    df = pd.DataFrame(columns=["Date", "Day", "Exercise", "Weight", "Reps", "Sets_Completed", "1RM"])
     df.to_csv(DB_FILE, index=False)
 
-if 'set_tracker' not in st.session_state:
-    st.session_state.set_tracker = {}
+# Track completion for the current session
+if 'completed_exercises' not in st.session_state:
+    st.session_state.completed_exercises = []
 
-def log_data(day, exercise, weight, reps, set_num):
+def log_bulk_data(day, exercise, weight, reps, total_sets):
     one_rm = round(weight * (1 + (reps / 30)), 1) if reps > 0 else 0
-    new_entry = pd.DataFrame([[datetime.now().strftime("%Y-%m-%d %H:%M"), day, exercise, weight, reps, set_num, one_rm]], 
-                             columns=["Date", "Day", "Exercise", "Weight", "Reps", "Set_Number", "1RM"])
+    # Log one entry representing the full completion of all sets
+    new_entry = pd.DataFrame([[datetime.now().strftime("%Y-%m-%d %H:%M"), day, exercise, weight, reps, total_sets, one_rm]], 
+                             columns=["Date", "Day", "Exercise", "Weight", "Reps", "Sets_Completed", "1RM"])
     new_entry.to_csv(DB_FILE, mode='a', header=False, index=False)
 
 # --- UI ---
@@ -68,20 +69,12 @@ st.divider()
 
 if selected_day in PROGRAM:
     for ex, info in PROGRAM[selected_day].items():
-        if ex not in st.session_state.set_tracker:
-            st.session_state.set_tracker[ex] = 0
-            
-        done_sets = st.session_state.set_tracker[ex]
-        total_sets = info['s']
+        is_done = ex in st.session_state.completed_exercises
         
-        # UI logic for the header
-        status_icon = "⏳" if done_sets < total_sets else "✅"
-        with st.expander(f"{status_icon} {ex} — {done_sets} / {total_sets} Sets Complete", expanded=(done_sets < total_sets)):
+        status_icon = "✅" if is_done else "🏋️"
+        with st.expander(f"{status_icon} {ex}", expanded=(not is_done)):
             
-            # Visual Progress Bar
-            progress = done_sets / total_sets
-            st.progress(progress)
-            st.write(f"**Target:** {total_sets} sets of {info['r']} reps @ {info['w']}kg")
+            st.write(f"**Target:** {info['s']} sets of {info['r']} reps @ {info['w']}kg")
             st.caption(f"Note: {info['note']}")
             
             col1, col2, col3 = st.columns([2, 2, 1])
@@ -91,15 +84,17 @@ if selected_day in PROGRAM:
                 r_input = st.number_input(f"Reps", key=f"r_{ex}", step=1, value=int(info['r']))
             with col3:
                 st.write(" ")
-                if st.button(f"Log Set {done_sets + 1}", key=f"btn_{ex}", disabled=(done_sets >= total_sets)):
-                    st.session_state.set_tracker[ex] += 1
-                    log_data(selected_day, ex, w_input, r_input, st.session_state.set_tracker[ex])
-                    st.rerun() # Refresh to update the progress bar immediately
+                if st.button(f"Log {info['s']} Sets", key=f"btn_{ex}", disabled=is_done):
+                    log_bulk_data(selected_day, ex, w_input, r_input, info['s'])
+                    st.session_state.completed_exercises.append(ex)
+                    st.toast(f"Logged all {info['s']} sets for {ex}!")
+                    st.rerun()
 
 else:
     st.info("Rest Day! Focus on recovery.")
 
 # --- HISTORY ---
+st.divider()
 if st.checkbox("Show Progress History"):
     if os.path.exists(DB_FILE):
         history_df = pd.read_csv(DB_FILE)
